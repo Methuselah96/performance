@@ -3,9 +3,7 @@ using MarkdownLog;
 using Perfolizer.Mathematics.SignificanceTesting;
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text.RegularExpressions;
 
 namespace ResultsComparer
 {
@@ -13,7 +11,39 @@ namespace ResultsComparer
     {
         internal static void Compare(TwoInputsOptions args)
         {
-            var notSame = GetNotSameResults(args).ToArray();
+            var results = ReadResults(args)
+                .Where(result => result.baseResult.Statistics != null && result.diffResult.Statistics != null).ToList();
+
+            foreach (var result in results)
+            {
+                var baseConfidenceInterval = result.baseResult.Statistics.ConfidenceInterval;
+                var diffConfidenceInterval = result.diffResult.Statistics.ConfidenceInterval;
+                Console.WriteLine($"{result.id} base: {FormatConfidenceInterval(baseConfidenceInterval)}");
+                Console.WriteLine($"{result.id} base: {FormatConfidenceInterval(diffConfidenceInterval)}");
+                if (baseConfidenceInterval.Mean >= diffConfidenceInterval.Lower &&
+                    baseConfidenceInterval.Mean <= diffConfidenceInterval.Upper)
+                {
+                    Console.WriteLine("Base is within diff confidence interval.");
+                }
+                else
+                {
+                    Console.WriteLine("Base is NOT within diff confidence interval.");
+                }
+
+                if (diffConfidenceInterval.Mean >= baseConfidenceInterval.Lower &&
+                    diffConfidenceInterval.Mean <= baseConfidenceInterval.Upper)
+                {
+                    Console.WriteLine("Diff is within base confidence interval.");
+                }
+                else
+                {
+                    Console.WriteLine("Diff is NOT within base confidence interval.");
+                }
+
+                Console.WriteLine();
+            }
+
+            var notSame = GetNotSameResults(results, args).ToArray();
 
             if (!notSame.Any())
             {
@@ -27,10 +57,13 @@ namespace ResultsComparer
             PrintTable(notSame, EquivalenceTestConclusion.Faster, args);
         }
 
-        private static IEnumerable<(string id, Benchmark baseResult, Benchmark diffResult, EquivalenceTestConclusion conclusion)> GetNotSameResults(TwoInputsOptions args)
+        private static string FormatConfidenceInterval(ConfidenceInterval confidenceInterval) => $"Mean = {FormatNano(confidenceInterval.Mean)}, ConfidenceInterval = [{FormatNano(confidenceInterval.Lower)}; {FormatNano(confidenceInterval.Upper)}] (CI 99.9%), Margin = {FormatNano(confidenceInterval.Margin)} ({confidenceInterval.Margin / confidenceInterval.Mean * 100:F2}% of Mean)";
+
+        private static string FormatNano(double nano) => $"{nano / 1000000:F3}";
+
+        private static IEnumerable<(string id, Benchmark baseResult, Benchmark diffResult, EquivalenceTestConclusion conclusion)> GetNotSameResults(IEnumerable<(string id, Benchmark baseResult, Benchmark diffResult)> results, TwoInputsOptions args)
         {
-            foreach ((string id, Benchmark baseResult, Benchmark diffResult) in ReadResults(args)
-                .Where(result => result.baseResult.Statistics != null && result.diffResult.Statistics != null)) // failures
+            foreach ((string id, Benchmark baseResult, Benchmark diffResult) in results) // failures
             {
                 var baseValues = baseResult.Statistics.OriginalValues.ToArray();
                 var diffValues = diffResult.Statistics.OriginalValues.ToArray();
