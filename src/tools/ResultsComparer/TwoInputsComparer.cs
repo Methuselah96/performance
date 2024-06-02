@@ -3,6 +3,7 @@ using MarkdownLog;
 using Perfolizer.Mathematics.SignificanceTesting;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 namespace ResultsComparer
@@ -12,49 +13,105 @@ namespace ResultsComparer
         internal static void Compare(TwoInputsOptions args)
         {
             var results = ReadResults(args)
-                .Where(result => result.baseResult.Statistics != null && result.diffResult.Statistics != null).ToList();
+                .Where(result => result.baseResults.All(benchmark => benchmark.Statistics != null) && result.diffResults.All(benchmark => benchmark.Statistics != null)).ToList();
 
             foreach (var result in results)
             {
-                var baseConfidenceInterval = result.baseResult.Statistics.ConfidenceInterval;
-                var diffConfidenceInterval = result.diffResult.Statistics.ConfidenceInterval;
-                Console.WriteLine($"{result.id} base: {FormatConfidenceInterval(baseConfidenceInterval)}");
-                Console.WriteLine($"{result.id} base: {FormatConfidenceInterval(diffConfidenceInterval)}");
-                if (baseConfidenceInterval.Mean >= diffConfidenceInterval.Lower &&
-                    baseConfidenceInterval.Mean <= diffConfidenceInterval.Upper)
+                for (var i = 0; i < result.baseResults.Count; i++)
                 {
-                    Console.WriteLine("Base is within diff confidence interval.");
+                    Console.WriteLine($"{result.id} base {i + 1}: {FormatConfidenceInterval(result.baseResults[i].Statistics.ConfidenceInterval)}");
                 }
-                else
+                for (var i = 0; i < result.diffResults.Count; i++)
                 {
-                    Console.WriteLine("Base is NOT within diff confidence interval.");
+                    Console.WriteLine($"{result.id} diff {i + 1}: {FormatConfidenceInterval(result.diffResults[i].Statistics.ConfidenceInterval)}");
                 }
 
-                if (diffConfidenceInterval.Mean >= baseConfidenceInterval.Lower &&
-                    diffConfidenceInterval.Mean <= baseConfidenceInterval.Upper)
+                var conclusions = new List<EquivalenceTestConclusion>();
+                for (var i = 0; i < result.baseResults.Count; i++)
                 {
-                    Console.WriteLine("Diff is within base confidence interval.");
+                    for (var j = 0; j < result.diffResults.Count; j++)
+                    {
+                        var baseValues = result.baseResults[i].Statistics.OriginalValues.ToArray();
+                        var diffValues = result.diffResults[j].Statistics.OriginalValues.ToArray();
+                        var userTresholdResult = StatisticalTestHelper.CalculateTost(MannWhitneyTest.Instance, baseValues, diffValues, args.StatisticalTestThreshold);
+                        Console.WriteLine($"Base {i + 1}, Diff {j + 1}: {userTresholdResult.Conclusion}");
+                        conclusions.Add(userTresholdResult.Conclusion);
+                    }
+                }
+
+                if (conclusions.All(conclusion => conclusion == EquivalenceTestConclusion.Faster))
+                {
+                    Console.WriteLine($"{result.id} conclusion: FASTER");
+                }
+                else if (conclusions.All(conclusion => conclusion == EquivalenceTestConclusion.Slower))
+                {
+                    Console.WriteLine($"{result.id} conclusion: SLOWER");
+                }
+                else if (conclusions.All(conclusion => conclusion == EquivalenceTestConclusion.Same))
+                {
+                    Console.WriteLine($"{result.id} conclusion: SAME");
                 }
                 else
                 {
-                    Console.WriteLine("Diff is NOT within base confidence interval.");
+                    Console.WriteLine($"{result.id} conclusion: INCONCLUSIVE");
                 }
+
+                // var baseConfidenceInterval = result.baseResult.Statistics.ConfidenceInterval;
+                // var diffConfidenceInterval = result.diffResult.Statistics.ConfidenceInterval;
+                // Console.WriteLine($"{result.id} base: {FormatConfidenceInterval(baseConfidenceInterval)}");
+                // Console.WriteLine($"{result.id} base: {FormatConfidenceInterval(diffConfidenceInterval)}");
+                // if (baseConfidenceInterval.Mean >= diffConfidenceInterval.Lower &&
+                //     baseConfidenceInterval.Mean <= diffConfidenceInterval.Upper)
+                // {
+                //     Console.WriteLine("Base is within diff confidence interval.");
+                // }
+                // else
+                // {
+                //     Console.WriteLine("Base is NOT within diff confidence interval.");
+                // }
+                //
+                // if (diffConfidenceInterval.Mean >= baseConfidenceInterval.Lower &&
+                //     diffConfidenceInterval.Mean <= baseConfidenceInterval.Upper)
+                // {
+                //     Console.WriteLine("Diff is within base confidence interval.");
+                // }
+                // else
+                // {
+                //     Console.WriteLine("Diff is NOT within base confidence interval.");
+                // }
 
                 Console.WriteLine();
             }
 
-            var notSame = GetNotSameResults(results, args).ToArray();
-
-            if (!notSame.Any())
-            {
-                Console.WriteLine($"No differences found between the benchmark results with threshold {args.StatisticalTestThreshold}.");
+            if (results.Count == 0)
                 return;
+
+            var firstResult = results[0];
+
+            for (var i = 0; i < firstResult.baseResults.Count; i++)
+            {
+                for (var j = 0; j < firstResult.diffResults.Count; j++)
+                {
+                    Console.WriteLine($"Base {i + 1}, Diff {j + 1} Results");
+
+                    var resultsForTheRest = results.Select(result =>
+                        (result.id, baseResult: result.baseResults[i], diffRefsult: result.diffResults[j]));
+
+                    var notSame = GetNotSameResults(resultsForTheRest, args).ToArray();
+
+                    if (!notSame.Any())
+                    {
+                        Console.WriteLine(
+                            $"No differences found between the benchmark results with threshold {args.StatisticalTestThreshold}.");
+                        return;
+                    }
+
+                    PrintSummary(notSame);
+
+                    PrintTable(notSame, EquivalenceTestConclusion.Slower, args);
+                    PrintTable(notSame, EquivalenceTestConclusion.Faster, args);
+                }
             }
-
-            PrintSummary(notSame);
-
-            PrintTable(notSame, EquivalenceTestConclusion.Slower, args);
-            PrintTable(notSame, EquivalenceTestConclusion.Faster, args);
         }
 
         private static string FormatConfidenceInterval(ConfidenceInterval confidenceInterval) => $"Mean = {FormatNano(confidenceInterval.Mean)}, ConfidenceInterval = [{FormatNano(confidenceInterval.Lower)}; {FormatNano(confidenceInterval.Upper)}] (CI 99.9%), Margin = {FormatNano(confidenceInterval.Margin)} ({confidenceInterval.Margin / confidenceInterval.Mean * 100:F2}% of Mean)";
@@ -141,27 +198,41 @@ namespace ResultsComparer
             Console.WriteLine();
         }
 
-        private static IEnumerable<(string id, Benchmark baseResult, Benchmark diffResult)> ReadResults(TwoInputsOptions args)
+        private static IEnumerable<(string id, List<Benchmark> baseResults, List<Benchmark> diffResults)> ReadResults(TwoInputsOptions args)
         {
-            var baseFiles = Helper.GetFilesToParse(args.BasePath);
-            var diffFiles = Helper.GetFilesToParse(args.DiffPath);
+            var baseFilesTrial1 = Helper.GetFilesToParse(Path.Join(args.BasePath, "trial-1"));
+            var baseFilesTrial2 = Helper.GetFilesToParse(Path.Join(args.BasePath, "trial-2"));
+            var diffFilesTrial1 = Helper.GetFilesToParse(Path.Join(args.DiffPath, "trial-1"));
+            var diffFilesTrial2 = Helper.GetFilesToParse(Path.Join(args.DiffPath, "trial-2"));
 
-            if (!baseFiles.Any() || !diffFiles.Any())
+            if (!baseFilesTrial1.Any() || !baseFilesTrial2.Any() || !diffFilesTrial1.Any() || !diffFilesTrial2.Any())
                 throw new ArgumentException($"Provided paths contained no {Helper.FullBdnJsonFileExtension} files.");
 
-            var baseResults = baseFiles.Select(Helper.ReadFromFile);
-            var diffResults = diffFiles.Select(Helper.ReadFromFile);
+            var baseResultsTrial1 = baseFilesTrial1.Select(Helper.ReadFromFile);
+            var baseResultsTrial2 = baseFilesTrial2.Select(Helper.ReadFromFile);
+            var diffResultsTrial1 = diffFilesTrial1.Select(Helper.ReadFromFile);
+            var diffResultsTrial2 = diffFilesTrial2.Select(Helper.ReadFromFile);
 
-            var benchmarkIdToDiffResults = diffResults
+            var benchmarkIdToDiffResultsTrial2 = diffResultsTrial2
                 .SelectMany(result => result.Benchmarks)
                 .Where(benchmarkResult => !args.Filters.Any() || args.Filters.Any(filter => filter.IsMatch(benchmarkResult.FullName)))
                 .ToDictionary(benchmarkResult => benchmarkResult.FullName, benchmarkResult => benchmarkResult);
 
-            return baseResults
+            var benchmarkIdToDiffResultsTrial1 = diffResultsTrial1
+                .SelectMany(result => result.Benchmarks)
+                .Where(benchmarkResult => !args.Filters.Any() || args.Filters.Any(filter => filter.IsMatch(benchmarkResult.FullName)))
+                .ToDictionary(benchmarkResult => benchmarkResult.FullName, benchmarkResult => benchmarkResult);
+
+            var benchmarkIdToBaseResultsTrial2 = baseResultsTrial2
+                .SelectMany(result => result.Benchmarks)
+                .Where(benchmarkResult => !args.Filters.Any() || args.Filters.Any(filter => filter.IsMatch(benchmarkResult.FullName)))
+                .ToDictionary(benchmarkResult => benchmarkResult.FullName, benchmarkResult => benchmarkResult);
+
+            return baseResultsTrial1
                 .SelectMany(result => result.Benchmarks)
                 .ToDictionary(benchmarkResult => benchmarkResult.FullName, benchmarkResult => benchmarkResult) // we use ToDictionary to make sure the results have unique IDs
-                .Where(baseResult => benchmarkIdToDiffResults.ContainsKey(baseResult.Key))
-                .Select(baseResult => (baseResult.Key, baseResult.Value, benchmarkIdToDiffResults[baseResult.Key]));
+                .Where(baseResult => benchmarkIdToDiffResultsTrial2.ContainsKey(baseResult.Key) && benchmarkIdToDiffResultsTrial1.ContainsKey(baseResult.Key) && benchmarkIdToBaseResultsTrial2.ContainsKey(baseResult.Key))
+                .Select(baseResult => (baseResult.Key, new List<Benchmark> { baseResult.Value, benchmarkIdToBaseResultsTrial2[baseResult.Key] }, new List<Benchmark> { benchmarkIdToDiffResultsTrial1[baseResult.Key], benchmarkIdToDiffResultsTrial2[baseResult.Key] }));
         }
 
         private static double GetRatio((string id, Benchmark baseResult, Benchmark diffResult, EquivalenceTestConclusion conclusion) item) => GetRatio(item.conclusion, item.baseResult, item.diffResult);
