@@ -1,4 +1,4 @@
-﻿using DataTransferContracts;
+using DataTransferContracts;
 using MarkdownLog;
 using Perfolizer.Mathematics.SignificanceTesting;
 using System;
@@ -39,7 +39,41 @@ namespace ResultsComparer
                     }
                 }
 
-                if (conclusions.All(conclusion => conclusion == EquivalenceTestConclusion.Faster))
+                var baseConclusions = new List<EquivalenceTestConclusion>();
+                for (var i = 0; i < result.baseResults.Count; i++)
+                {
+                    for (var j = i + 1; j < result.baseResults.Count; j++)
+                    {
+                        var baseValues1 = result.baseResults[i].Statistics.OriginalValues.ToArray();
+                        var baseValues2 = result.baseResults[j].Statistics.OriginalValues.ToArray();
+                        var userTresholdResult = StatisticalTestHelper.CalculateTost(MannWhitneyTest.Instance, baseValues1, baseValues2, args.StatisticalTestThreshold);
+                        Console.WriteLine($"Base {i + 1}, Base {j + 1}: {userTresholdResult.Conclusion}");
+                        baseConclusions.Add(userTresholdResult.Conclusion);
+                    }
+                }
+
+                var diffConclusions = new List<EquivalenceTestConclusion>();
+                for (var i = 0; i < result.diffResults.Count; i++)
+                {
+                    for (var j = i + 1; j < result.diffResults.Count; j++)
+                    {
+                        var diffValues1 = result.diffResults[i].Statistics.OriginalValues.ToArray();
+                        var diffValues2 = result.diffResults[j].Statistics.OriginalValues.ToArray();
+                        var userTresholdResult = StatisticalTestHelper.CalculateTost(MannWhitneyTest.Instance, diffValues1, diffValues2, args.StatisticalTestThreshold);
+                        Console.WriteLine($"Diff {i + 1}, Diff {j + 1}: {userTresholdResult.Conclusion}");
+                        diffConclusions.Add(userTresholdResult.Conclusion);
+                    }
+                }
+
+                if (baseConclusions.Any(conclusion => conclusion != EquivalenceTestConclusion.Same))
+                {
+                    Console.WriteLine($"{result.id} conclusion: INCONCLUSIVE (Base were not all same)");
+                }
+                else if (diffConclusions.Any(conclusion => conclusion != EquivalenceTestConclusion.Same))
+                {
+                    Console.WriteLine($"{result.id} conclusion: INCONCLUSIVE (Diff were not all same)");
+                }
+                else if (conclusions.All(conclusion => conclusion == EquivalenceTestConclusion.Faster))
                 {
                     Console.WriteLine($"{result.id} conclusion: FASTER");
                 }
@@ -53,7 +87,7 @@ namespace ResultsComparer
                 }
                 else
                 {
-                    Console.WriteLine($"{result.id} conclusion: INCONCLUSIVE");
+                    Console.WriteLine($"{result.id} conclusion: INCONCLUSIVE (Not consistent conclusions)");
                 }
 
                 // var baseConfidenceInterval = result.baseResult.Statistics.ConfidenceInterval;
