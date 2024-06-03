@@ -1,4 +1,4 @@
-using DataTransferContracts;
+﻿using DataTransferContracts;
 using MarkdownLog;
 using Perfolizer.Mathematics.SignificanceTesting;
 using System;
@@ -234,18 +234,38 @@ namespace ResultsComparer
 
         private static IEnumerable<(string id, List<Benchmark> baseResults, List<Benchmark> diffResults)> ReadResults(TwoInputsOptions args)
         {
-            var baseFilesTrial1 = Helper.GetFilesToParse(Path.Join(args.BasePath, "trial-1"));
-            var baseFilesTrial2 = Helper.GetFilesToParse(Path.Join(args.BasePath, "trial-2"));
-            var diffFilesTrial1 = Helper.GetFilesToParse(Path.Join(args.DiffPath, "trial-1"));
-            var diffFilesTrial2 = Helper.GetFilesToParse(Path.Join(args.DiffPath, "trial-2"));
+            var baseTrialIndex = 1;
+            var baseFilesTrials = new List<string[]>();
+            while (Directory.Exists(Path.Join(args.BasePath, $"trial-{baseTrialIndex}")))
+            {
+                baseFilesTrials.Add(Helper.GetFilesToParse(Path.Join(args.BasePath, $"trial-{baseTrialIndex}")));
+                baseTrialIndex += 1;
+            }
 
-            if (!baseFilesTrial1.Any() || !baseFilesTrial2.Any() || !diffFilesTrial1.Any() || !diffFilesTrial2.Any())
+            var diffTrialIndex = 1;
+            var diffFilesTrials = new List<string[]>();
+            while (Directory.Exists(Path.Join(args.DiffPath, $"trial-{baseTrialIndex}")))
+            {
+                diffFilesTrials.Add(Helper.GetFilesToParse(Path.Join(args.DiffPath, $"trial-{baseTrialIndex}")));
+                diffTrialIndex += 1;
+            }
+
+            if (!baseFilesTrials.Any() || !diffFilesTrials.Any())
+            {
+                throw new ArgumentException("Found no trial directories.");
+            }
+
+            if (baseFilesTrials.Any(trialFiles => !trialFiles.Any()) || diffFilesTrials.Any(trialFiles => !trialFiles.Any()))
+            {
                 throw new ArgumentException($"Provided paths contained no {Helper.FullBdnJsonFileExtension} files.");
+            }
 
-            var baseResultsTrial1 = baseFilesTrial1.Select(Helper.ReadFromFile);
-            var baseResultsTrial2 = baseFilesTrial2.Select(Helper.ReadFromFile);
-            var diffResultsTrial1 = diffFilesTrial1.Select(Helper.ReadFromFile);
-            var diffResultsTrial2 = diffFilesTrial2.Select(Helper.ReadFromFile);
+            var baseResultsTrials =
+                baseFilesTrials.Select(baseFilesTrial => baseFilesTrial.Select(Helper.ReadFromFile));
+            var diffResultsTrials =
+                diffFilesTrials.Select(diffFilesTrial => diffFilesTrial.Select(Helper.ReadFromFile));
+
+            var benchmarkResultIds = baseResultsTrials.SelectMany(trialFiles => trialFiles.Select(trialFile => trialFile.Benchmarks))
 
             var benchmarkIdToDiffResultsTrial2 = diffResultsTrial2
                 .SelectMany(result => result.Benchmarks)
