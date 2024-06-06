@@ -235,18 +235,18 @@ namespace ResultsComparer
         private static IEnumerable<(string id, List<Benchmark> baseResults, List<Benchmark> diffResults)> ReadResults(TwoInputsOptions args)
         {
             var baseTrialIndex = 1;
-            var baseFilesTrials = new List<string[]>();
+            var baseFilesTrials = new List<string>();
             while (Directory.Exists(Path.Join(args.BasePath, $"trial-{baseTrialIndex}")))
             {
-                baseFilesTrials.Add(Helper.GetFilesToParse(Path.Join(args.BasePath, $"trial-{baseTrialIndex}")));
+                baseFilesTrials.Add(Helper.GetFilesToParse(Path.Join(args.BasePath, $"trial-{baseTrialIndex}")).Single());
                 baseTrialIndex += 1;
             }
 
             var diffTrialIndex = 1;
-            var diffFilesTrials = new List<string[]>();
-            while (Directory.Exists(Path.Join(args.DiffPath, $"trial-{baseTrialIndex}")))
+            var diffFilesTrials = new List<string>();
+            while (Directory.Exists(Path.Join(args.DiffPath, $"trial-{diffTrialIndex}")))
             {
-                diffFilesTrials.Add(Helper.GetFilesToParse(Path.Join(args.DiffPath, $"trial-{baseTrialIndex}")));
+                diffFilesTrials.Add(Helper.GetFilesToParse(Path.Join(args.DiffPath, $"trial-{diffTrialIndex}")).Single());
                 diffTrialIndex += 1;
             }
 
@@ -260,33 +260,19 @@ namespace ResultsComparer
                 throw new ArgumentException($"Provided paths contained no {Helper.FullBdnJsonFileExtension} files.");
             }
 
-            var baseResultsTrials =
-                baseFilesTrials.Select(baseFilesTrial => baseFilesTrial.Select(Helper.ReadFromFile));
-            var diffResultsTrials =
-                diffFilesTrials.Select(diffFilesTrial => diffFilesTrial.Select(Helper.ReadFromFile));
+            var baseResultsTrials = baseFilesTrials.Select(Helper.ReadFromFile).ToList();
+            var diffResultsTrials = diffFilesTrials.Select(Helper.ReadFromFile).ToList();
 
-            var benchmarkResultIds = baseResultsTrials.SelectMany(trialFiles => trialFiles.Select(trialFile => trialFile.Benchmarks))
+            var benchmarkResultIds = baseResultsTrials
+                .SelectMany(resultsTrial => resultsTrial.Benchmarks.Select(benchmark => benchmark.FullName)).Distinct()
+                .Where(fullName => baseResultsTrials.Concat(diffResultsTrials).All(resultsTrial =>
+                    resultsTrial.Benchmarks.Any(benchmark => benchmark.FullName == fullName))).ToList();
 
-            var benchmarkIdToDiffResultsTrial2 = diffResultsTrial2
-                .SelectMany(result => result.Benchmarks)
-                .Where(benchmarkResult => !args.Filters.Any() || args.Filters.Any(filter => filter.IsMatch(benchmarkResult.FullName)))
-                .ToDictionary(benchmarkResult => benchmarkResult.FullName, benchmarkResult => benchmarkResult);
-
-            var benchmarkIdToDiffResultsTrial1 = diffResultsTrial1
-                .SelectMany(result => result.Benchmarks)
-                .Where(benchmarkResult => !args.Filters.Any() || args.Filters.Any(filter => filter.IsMatch(benchmarkResult.FullName)))
-                .ToDictionary(benchmarkResult => benchmarkResult.FullName, benchmarkResult => benchmarkResult);
-
-            var benchmarkIdToBaseResultsTrial2 = baseResultsTrial2
-                .SelectMany(result => result.Benchmarks)
-                .Where(benchmarkResult => !args.Filters.Any() || args.Filters.Any(filter => filter.IsMatch(benchmarkResult.FullName)))
-                .ToDictionary(benchmarkResult => benchmarkResult.FullName, benchmarkResult => benchmarkResult);
-
-            return baseResultsTrial1
-                .SelectMany(result => result.Benchmarks)
-                .ToDictionary(benchmarkResult => benchmarkResult.FullName, benchmarkResult => benchmarkResult) // we use ToDictionary to make sure the results have unique IDs
-                .Where(baseResult => benchmarkIdToDiffResultsTrial2.ContainsKey(baseResult.Key) && benchmarkIdToDiffResultsTrial1.ContainsKey(baseResult.Key) && benchmarkIdToBaseResultsTrial2.ContainsKey(baseResult.Key))
-                .Select(baseResult => (baseResult.Key, new List<Benchmark> { baseResult.Value, benchmarkIdToBaseResultsTrial2[baseResult.Key] }, new List<Benchmark> { benchmarkIdToDiffResultsTrial1[baseResult.Key], benchmarkIdToDiffResultsTrial2[baseResult.Key] }));
+            return benchmarkResultIds.Select(benchmarkId => (benchmarkId,
+                baseResultsTrials.Select(resultsTrial =>
+                    resultsTrial.Benchmarks.Single(benchmark => benchmark.FullName == benchmarkId)).ToList(),
+                diffResultsTrials.Select(resultsTrial =>
+                    resultsTrial.Benchmarks.Single(benchmark => benchmark.FullName == benchmarkId)).ToList()));
         }
 
         private static double GetRatio((string id, Benchmark baseResult, Benchmark diffResult, EquivalenceTestConclusion conclusion) item) => GetRatio(item.conclusion, item.baseResult, item.diffResult);
